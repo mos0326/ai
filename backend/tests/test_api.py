@@ -2,6 +2,8 @@
 
 from fastapi.testclient import TestClient
 
+import app.services.llm as llm_mod
+import app.services.memory as memory_mod
 from app.main import app
 
 client = TestClient(app)
@@ -76,3 +78,42 @@ def test_chat_streams_error_without_llm_key():
     detail = client.get(f"/api/conversations/{cid}").json()
     roles = [m["role"] for m in detail["messages"]]
     assert "user" in roles
+
+
+async def _fake_stream_agent(**kwargs):
+    """LLMをモックしたストリーミング（テキスト差分→最終）。"""
+    yield {"type": "text", "delta": "こんにちは"}
+    yield {"type": "text", "delta": "、元気？"}
+    yield {
+        "type": "final",
+        "text": "こんにちは、元気？",
+        "content": [{"type": "text", "text": "こんにちは、元気？"}],
+    }
+
+
+async def _fake_extract(*args, **kwargs):
+    return []
+
+
+def test_chat_stream_happy_path(monkeypatch):
+    """LLMをモックし、SSEのdelta/done整形とアシスタントメッセージ保存を検証。"""
+    monkeypatch.setattr(llm_mod, "stream_agent", _fake_stream_agent)
+    monkeypatch.setattr(memory_mod, "extract_and_store", _fake_extract)
+
+    cid = client.post("/api/conversations", json={}).json()["id"]
+    r = client.post(
+        f"/api/conversations/{cid}/chat",
+        json={"content": "やあ", "use_tools": False},
+    )
+    assert r.status_code == 200
+    body = r.text
+    assert '"type": "delta"' in body
+    assert "こんにちは" in body
+    assert '"type": "done"' in body
+
+    # アシスタントの応答が永続化されている
+    detail = client.get(f"/api/conversations/{cid}").json()
+    assistant = [m for m in detail["messages"] if m["role"] == "assistant"]
+    assert assistant and "こんにちは" in assistant[-1]["content"]
+    # 初回メッセージで会話タイトルが内容から設定される
+    assert detail["title"] == "やあ"
