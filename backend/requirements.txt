@@ -19,6 +19,9 @@ httpx>=0.27
 beautifulsoup4>=4.12
 numpy>=1.26
 
+# --- ベクトル（PostgreSQL 使用時に有効。SQLite では未使用） ---
+pgvector>=0.2
+
 # --- Tests ---
 pytest>=8.0
 

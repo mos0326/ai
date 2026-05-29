@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     voyage_embedding_model: str = "voyage-3"
     local_embedding_dim: int = 384
+    # pgvector 使用時の固定次元。プロバイダの出力次元に合わせる
+    # （openai text-embedding-3-small=1536 / voyage-3=1024 / local=local_embedding_dim）
+    embedding_dim: int = 1536
 
     # --- 検索 / リサーチ ---
     search_provider: str = "tavily"  # tavily | brave | none
@@ -62,6 +65,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def is_postgres(self) -> bool:
+        return self.database_url.startswith("postgresql")
 
     @property
     def resolved_embedding_provider(self) -> str:

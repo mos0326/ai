@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 
@@ -31,6 +32,9 @@ settings = get_settings()
 router = APIRouter(prefix="/api/conversations", tags=["chat"])
 
 MAX_HISTORY = 20  # 直近何メッセージを文脈に含めるか
+
+# バックグラウンドの記憶抽出タスクへの参照を保持（GCで途中キャンセルされないように）
+_bg_tasks: set[asyncio.Task] = set()
 
 
 def _sse(event_type: str, **data) -> str:
@@ -139,26 +143,20 @@ async def chat(
                 yield _sse("sources", sources=collector.sources)
             yield _sse("done", assistant_message_id=assistant_msg.id)
 
-            # 5. 記憶抽出（失敗しても会話は壊さない）
-            try:
-                added = await memory.extract_and_store(
-                    db,
-                    user_id,
-                    owner_name,
-                    payload.content,
-                    final_text,
-                    source_message_id=assistant_msg.id,
-                )
-                if added:
-                    yield _sse(
-                        "memory",
-                        added=[
-                            {"id": m.id, "content": m.content, "category": m.category}
-                            for m in added
-                        ],
+            # 5. 記憶抽出はバックグラウンドへ（応答ストリームを待たせない）。
+            #    専用セッションで実行され、抽出結果は次回の記憶パネル表示に反映される。
+            if settings.memory_extraction_enabled and llm.is_enabled():
+                task = asyncio.create_task(
+                    memory.extract_in_background(
+                        user_id,
+                        owner_name,
+                        payload.content,
+                        final_text,
+                        assistant_msg.id,
                     )
-            except Exception:
-                pass
+                )
+                _bg_tasks.add(task)
+                task.add_done_callback(_bg_tasks.discard)
 
         except llm.LLMNotConfigured as e:
             yield _sse("error", message=str(e))

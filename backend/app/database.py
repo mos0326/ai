@@ -36,6 +36,14 @@ class Base(DeclarativeBase):
 
 def init_db() -> None:
     """テーブルを作成する（存在しなければ）。"""
+    if settings.is_postgres:
+        # pgvector 拡張を有効化してから（Vector カラム作成のため）
+        from sqlalchemy import text
+
+        with engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
+
     from . import models  # noqa: F401  モデル登録のため import
 
     Base.metadata.create_all(bind=engine)

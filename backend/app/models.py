@@ -19,7 +19,20 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from .config import get_settings
 from .database import Base
+
+_settings = get_settings()
+
+# 埋め込みカラムの型は DB によって切り替える:
+#  - PostgreSQL: pgvector の Vector 型（SQL での近傍検索が使える）
+#  - それ以外(SQLite): JSON に list[float] を保存し Python 側でコサイン計算
+if _settings.is_postgres:
+    from pgvector.sqlalchemy import Vector
+
+    _EmbeddingType: object = Vector(_settings.embedding_dim)
+else:
+    _EmbeddingType = JSON
 
 
 def utcnow() -> dt.datetime:
@@ -91,7 +104,7 @@ class Memory(Base):
     source_message_id: Mapped[int | None] = mapped_column(
         ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
     )
-    embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(_EmbeddingType, nullable=True)
     importance: Mapped[int] = mapped_column(Integer, default=3)  # 1-5
     # active | superseded（矛盾解消で古い記憶を superseded にする）
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)

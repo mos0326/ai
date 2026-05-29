@@ -17,6 +17,7 @@ from . import embeddings, llm
 settings = get_settings()
 
 VALID_CATEGORIES = {"preference", "relationship", "project", "goal", "fact", "other"}
+_IS_PG = settings.is_postgres
 
 # 重複・矛盾とみなす類似度のしきい値
 _DUPLICATE_THRESHOLD = 0.93
@@ -54,14 +55,36 @@ async def retrieve(
     db: Session, user_id: int, query: str, k: int | None = None
 ) -> list[Memory]:
     """query に関連する記憶を上位 k 件返す（プロンプト注入用）。"""
+    k = k or settings.memory_top_k
+    q = await embeddings.embed_text(query)
+
+    if _IS_PG:
+        # pgvector のコサイン距離で DB 側ソート（distance = 1 - 類似度）
+        dist = Memory.embedding.cosine_distance(q).label("dist")
+        rows = db.execute(
+            select(Memory, dist)
+            .where(
+                Memory.user_id == user_id,
+                Memory.status == "active",
+                Memory.embedding.isnot(None),
+            )
+            .order_by(dist)
+            .limit(k)
+        ).all()
+        return [
+            m
+            for m, d in rows
+            if d is not None and (1.0 - float(d)) >= settings.memory_min_similarity
+        ]
+
+    # SQLite ほか: Python でコサイン類似度
     mems = _active_memories(db, user_id)
     if not mems:
         return []
-    q = await embeddings.embed_text(query)
     top = cosine_topk(
         q,
         [(m, m.embedding) for m in mems],
-        k or settings.memory_top_k,
+        k,
         settings.memory_min_similarity,
     )
     return [m for m, _ in top]
@@ -161,3 +184,29 @@ async def extract_and_store(
     for m in stored:
         db.refresh(m)
     return stored
+
+
+async def extract_in_background(
+    user_id: int,
+    owner_name: str,
+    user_text: str,
+    assistant_text: str,
+    source_message_id: int | None = None,
+) -> None:
+    """リクエストのDBセッションとは独立に、記憶抽出を実行する。
+
+    チャットのSSEストリームを待たせないよう、応答完了後にバックグラウンドで呼ぶ。
+    専用セッションを開くため、リクエスト終了後でも安全に動作する。
+    """
+    from ..database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        await extract_and_store(
+            db, user_id, owner_name, user_text, assistant_text, source_message_id
+        )
+    except Exception:
+        # 抽出失敗はユーザー体験に影響させない
+        pass
+    finally:
+        db.close()

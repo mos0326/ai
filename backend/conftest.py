@@ -12,13 +12,18 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-_test_db = os.path.join(tempfile.gettempdir(), "personal_ai_test.db")
-if os.path.exists(_test_db):
-    os.remove(_test_db)
+# TEST_DATABASE_URL が指定されていればそれを使う（Postgres+pgvector の実テスト用）。
+# 未指定なら一時 SQLite。
+_db_url = os.environ.get("TEST_DATABASE_URL")
+if not _db_url:
+    _test_db = os.path.join(tempfile.gettempdir(), "personal_ai_test.db")
+    if os.path.exists(_test_db):
+        os.remove(_test_db)
+    _db_url = f"sqlite:///{_test_db}"
 
-os.environ["DATABASE_URL"] = f"sqlite:///{_test_db}"
-os.environ["EMBEDDING_PROVIDER"] = "local"
-os.environ["SEARCH_PROVIDER"] = "tavily"
+os.environ["DATABASE_URL"] = _db_url
+os.environ.setdefault("EMBEDDING_PROVIDER", "local")
+os.environ.setdefault("SEARCH_PROVIDER", "tavily")
 for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TAVILY_API_KEY", "BRAVE_API_KEY"):
     os.environ.pop(key, None)
 

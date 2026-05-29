@@ -1,0 +1,26 @@
+# PostgreSQL + pgvector を使う場合の開発用DB。
+#   docker compose up -d
+# その後 backend/.env で:
+#   DATABASE_URL=postgresql+psycopg://personal_ai:personal_ai@localhost:5432/personal_ai
+#   EMBEDDING_DIM=<埋め込みプロバイダの次元>   # openai=1536 / voyage-3=1024 / local=384
+# と設定し、`pip install "psycopg[binary]"` を実行する。
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: personal_ai_db
+    environment:
+      POSTGRES_USER: personal_ai
+      POSTGRES_PASSWORD: personal_ai
+      POSTGRES_DB: personal_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U personal_ai"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
